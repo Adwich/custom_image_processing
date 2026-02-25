@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "custom-worker"
+version = "0.1.0"
+description = "Fly worker for customization ingest, strict dx resolution, and image processing"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "psycopg[binary]>=3.2.0",
+  "requests>=2.32.0",
+  "Pillow>=10.4.0",
+  "numpy>=1.26.0",
+  "scipy>=1.13.0",
+  "google-api-python-client>=2.149.0",
+  "google-auth>=2.35.0",
+  "google-auth-httplib2>=0.2.0",
+  "google-auth-oauthlib>=1.2.1",
+  "rembg>=2.0.59",
+  "onnxruntime>=1.19.0",
+  "sentry-sdk>=2.18.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
