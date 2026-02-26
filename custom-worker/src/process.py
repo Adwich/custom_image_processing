@@ -11,12 +11,15 @@ from .db import Database
 from .images import (
     add_outer_white_stroke,
     alpha_from_rgba,
+    defringe_edges_to_white,
     frame_cutout,
     image_to_png_bytes,
     load_image_from_bytes,
+    refine_cutout_alpha,
 )
 from .logging_events import EventLogger
 from .quality import QualityResult, evaluate_quality_gate
+from .prompted_sam import PromptedSamSegmenter
 from .storage import SupabaseStorageClient
 
 
@@ -42,6 +45,7 @@ class AssetProcessor:
         self.storage = storage
         self.logger = logger
         self._sessions: dict[str, Any] = {}
+        self._prompted_segmenter: PromptedSamSegmenter | None = None
 
     def _get_session(self, model_name: str):
         if model_name in self._sessions:
@@ -53,6 +57,13 @@ class AssetProcessor:
         return session
 
     def _segment(self, image: Image.Image, cut_option: str) -> Image.Image:
+        if self.config.segmentation_backend == "prompted_sam":
+            try:
+                return self._segment_prompted_sam(image, cut_option)
+            except Exception:
+                # Keep processing robust: fallback to rembg when prompted mode fails.
+                pass
+
         if cut_option in ("head", "body"):
             model = self.config.rembg_model_human
         elif cut_option == "car":
@@ -63,9 +74,40 @@ class AssetProcessor:
         from rembg import remove
 
         payload = image_to_png_bytes(image.convert("RGBA"))
-        cutout_bytes = remove(payload, session=self._get_session(model))
+        cutout_bytes = remove(
+            payload,
+            session=self._get_session(model),
+            alpha_matting=self.config.rembg_alpha_matting,
+            alpha_matting_foreground_threshold=self.config.rembg_alpha_matting_foreground_threshold,
+            alpha_matting_background_threshold=self.config.rembg_alpha_matting_background_threshold,
+            alpha_matting_erode_size=self.config.rembg_alpha_matting_erode_size,
+            post_process_mask=self.config.rembg_post_process_mask,
+        )
         cutout = load_image_from_bytes(cutout_bytes)
         return cutout.convert("RGBA")
+
+    def _segment_prompted_sam(self, image: Image.Image, cut_option: str) -> Image.Image:
+        if self._prompted_segmenter is None:
+            self._prompted_segmenter = PromptedSamSegmenter(
+                detector_model=self.config.prompted_detector_model,
+                sam_model=self.config.prompted_sam_model,
+                detection_threshold=self.config.prompted_detection_threshold,
+            )
+
+        if cut_option == "head":
+            labels = self.config.prompted_head_labels
+        elif cut_option == "body":
+            labels = self.config.prompted_body_labels
+        elif cut_option == "car":
+            labels = self.config.prompted_car_labels
+        else:
+            labels = self.config.prompted_body_labels
+
+        return self._prompted_segmenter.segment(
+            image,
+            labels,
+            mode=cut_option,
+        ).convert("RGBA")
 
     def process_images(self) -> int:
         assets = self.db.claim_assets_for_processing(self.config.max_process_per_run)
@@ -160,6 +202,22 @@ class AssetProcessor:
             mask_storage_path = None
         else:
             cutout = self._segment(original_image, cut_option)
+            if cut_option == "head":
+                cutout = refine_cutout_alpha(
+                    cutout,
+                    keep_components=1,
+                    min_component_px=120,
+                    min_component_ratio=0.02,
+                    smooth_sigma=1.05,
+                )
+            else:
+                cutout = refine_cutout_alpha(
+                    cutout,
+                    keep_components=2,
+                    min_component_px=100,
+                    min_component_ratio=0.01,
+                    smooth_sigma=0.9,
+                )
             alpha = alpha_from_rgba(cutout)
             quality = evaluate_quality_gate(alpha, cut_option)
 
@@ -174,6 +232,11 @@ class AssetProcessor:
         framed, _ = frame_cutout(cutout, cut_option, self.config.image_output_size)
 
         if cut_option != "none":
+            framed = defringe_edges_to_white(
+                framed,
+                strength=self.config.edge_defringe_strength,
+                alpha_max=self.config.edge_defringe_alpha_max,
+            )
             final_img = add_outer_white_stroke(framed, self.config.stroke_px)
         else:
             final_img = framed

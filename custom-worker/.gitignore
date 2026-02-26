@@ -1,8 +1,12 @@
 __pycache__/
 .pytest_cache/
 .venv/
+.venv311/
 .DS_Store
 *.pyc
 .env
 .env.local
 secrets/
+local-process-runs/
+
+local-drive-sim/

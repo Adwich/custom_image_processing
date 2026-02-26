@@ -27,6 +27,10 @@ dependencies = [
 dev = [
   "pytest>=8.3.0"
 ]
+prompted = [
+  "torch>=2.2.0",
+  "transformers>=4.46.0"
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

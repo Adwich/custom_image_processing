@@ -23,34 +23,58 @@ MIME_EXTENSION_MAP = {
 }
 
 
+ORDER_SEGMENT_NUMERIC_RE = re.compile(r"^#?(\d+)$")
+ORDER_SEGMENT_CLIENT_WITH_HASH_RE = re.compile(r"^(\d+)-#(\d+)$")
+ORDER_FILENAME_CLIENT_WITH_HASH_RE = re.compile(r"^(\d+)-#(\d+)-")
+ORDER_FILENAME_NUMERIC_RE = re.compile(r"^#?(\d+)-")
+ORDER_FILENAME_GENERIC_RE = re.compile(r"^#?([^-_/]+)-")
+QTY_PREFIX_RE = re.compile(r"^(\d+)x-(.+)$", re.IGNORECASE)
+TRAILING_QTY_RE = re.compile(r"-x?(\d+)$", re.IGNORECASE)
+CUT_WITH_SCENT_RE = re.compile(r"(?i)\b(head|body|car|none)\b\s*-\s*(.+)$")
+
+
 @dataclass(frozen=True)
 class ParsedDriveMeta:
     client_order_id: Optional[str]
     quantity: Optional[int]
     cut_option: Optional[str]
+    scent: Optional[str]
 
 
 def parse_client_order_id(drive_path: str, file_name: str) -> Optional[str]:
-    path = drive_path.strip("/")
-    if path:
-        top = path.split("/", 1)[0].strip()
-        if top:
-            return top
+    path_parts = [part.strip() for part in drive_path.strip("/").split("/") if part.strip()]
+    for part in path_parts:
+        match = ORDER_SEGMENT_CLIENT_WITH_HASH_RE.match(part)
+        if match:
+            return f"{match.group(1)}-{match.group(2)}"
 
-    match = re.match(r"^([^-_/]+)-", file_name)
+    for part in path_parts:
+        match = ORDER_SEGMENT_NUMERIC_RE.match(part)
+        if match:
+            return match.group(1)
+
+    match = ORDER_FILENAME_CLIENT_WITH_HASH_RE.match(file_name.strip())
     if match:
-        return match.group(1).strip()
+        return f"{match.group(1)}-{match.group(2)}"
+
+    match = ORDER_FILENAME_NUMERIC_RE.match(file_name.strip())
+    if match:
+        return match.group(1)
+
+    match = ORDER_FILENAME_GENERIC_RE.match(file_name.strip())
+    if match:
+        return match.group(1).lstrip("#").strip()
     return None
 
 
 def parse_quantity(drive_path: str, file_name: str) -> Optional[int]:
     path_parts = [p for p in drive_path.strip("/").split("/") if p]
-    if len(path_parts) >= 2:
-        match = re.match(r"^(\d+)x-", path_parts[1], re.IGNORECASE)
+    for part in path_parts:
+        match = re.match(r"^(\d+)x-", part, re.IGNORECASE)
         if match:
             return int(match.group(1))
 
-    match = re.search(r"-(\d+)(?:\.[^.]+)?$", file_name)
+    match = re.search(r"-x?(\d+)(?:\.[^.]+)?$", file_name, re.IGNORECASE)
     if match:
         return int(match.group(1))
     return None
@@ -64,11 +88,52 @@ def parse_cut_option(drive_path: str, file_name: str) -> Optional[str]:
     return None
 
 
+def _strip_file_extension(name: str) -> str:
+    if "." in name:
+        return name.rsplit(".", 1)[0]
+    return name
+
+
+def parse_scent(drive_path: str, file_name: str) -> Optional[str]:
+    path_parts = [part.strip() for part in drive_path.strip("/").split("/") if part.strip()]
+    candidates: list[str] = []
+
+    for part in path_parts:
+        match = QTY_PREFIX_RE.match(part)
+        if match:
+            candidates.append(match.group(2).strip())
+
+    candidates.append(_strip_file_extension(file_name.strip()))
+
+    for raw in candidates:
+        text = raw.strip()
+        if not text:
+            continue
+
+        # Remove order prefix and trailing quantity to isolate variant text.
+        text = re.sub(r"^#?\d+-", "", text)
+        text = TRAILING_QTY_RE.sub("", text).strip(" -_")
+        if not text:
+            continue
+
+        match = CUT_WITH_SCENT_RE.search(text)
+        if not match:
+            continue
+
+        scent = match.group(2).strip(" -_")
+        scent = TRAILING_QTY_RE.sub("", scent).strip(" -_")
+        if scent:
+            return scent
+
+    return None
+
+
 def parse_drive_metadata(drive_path: str, file_name: str) -> ParsedDriveMeta:
     return ParsedDriveMeta(
         client_order_id=parse_client_order_id(drive_path, file_name),
         quantity=parse_quantity(drive_path, file_name),
         cut_option=parse_cut_option(drive_path, file_name),
+        scent=parse_scent(drive_path, file_name),
     )
 
 
@@ -182,7 +247,7 @@ def _ingest_single_file(
             "drive_path": file.drive_path,
             "original_storage_path": original_path,
             "cut_option": parsed.cut_option,
-            "scent": None,
+            "scent": parsed.scent,
             "quantity": parsed.quantity,
             "status": status,
             "error": None,
@@ -203,6 +268,7 @@ def _ingest_single_file(
             "original_storage_path": original_path,
             "quantity": parsed.quantity,
             "cut_option": parsed.cut_option,
+            "scent": parsed.scent,
             "status": status,
         },
     )

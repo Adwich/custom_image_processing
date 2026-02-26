@@ -3,7 +3,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from src.images import add_outer_white_stroke, alpha_from_rgba, frame_cutout
+from src.images import (
+    add_outer_white_stroke,
+    alpha_from_rgba,
+    defringe_edges_to_white,
+    frame_cutout,
+)
 from src.quality import evaluate_quality_gate
 
 
@@ -46,3 +51,23 @@ def test_negative_sets_trigger_needs_review() -> None:
 
     assert gate.passed is False
     assert ("head_bbox_too_wide" in gate.reasons) or ("mask_area_ratio_out_of_range" in gate.reasons)
+
+
+def test_defringe_lightens_dark_edge_pixels() -> None:
+    arr = np.zeros((60, 60, 4), dtype=np.uint8)
+    arr[15:45, 15:45, :3] = 120
+    arr[15:45, 15:45, 3] = 255
+    arr[12:48, 12:48, :3] = 0
+    arr[12:48, 12:48, 3] = 90
+    arr[15:45, 15:45, :3] = 120
+    arr[15:45, 15:45, 3] = 255
+
+    img = Image.fromarray(arr, mode="RGBA")
+    out = defringe_edges_to_white(img, strength=1.0, alpha_max=245)
+    out_arr = np.asarray(out, dtype=np.uint8)
+
+    edge_mask = arr[:, :, 3] == 90
+    before_edge_brightness = float(arr[:, :, :3][edge_mask].mean())
+    after_edge_brightness = float(out_arr[:, :, :3][edge_mask].mean())
+
+    assert after_edge_brightness > before_edge_brightness

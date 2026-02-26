@@ -32,10 +32,24 @@ class AppConfig:
 
     image_output_size: int
     stroke_px: int
+    edge_defringe_strength: float
+    edge_defringe_alpha_max: int
 
     rembg_model_human: str
     rembg_model_object: str
     rembg_model_fallback: str
+    rembg_alpha_matting: bool
+    rembg_alpha_matting_foreground_threshold: int
+    rembg_alpha_matting_background_threshold: int
+    rembg_alpha_matting_erode_size: int
+    rembg_post_process_mask: bool
+    segmentation_backend: str
+    prompted_detector_model: str
+    prompted_sam_model: str
+    prompted_detection_threshold: float
+    prompted_head_labels: tuple[str, ...]
+    prompted_body_labels: tuple[str, ...]
+    prompted_car_labels: tuple[str, ...]
 
 
 class ConfigError(RuntimeError):
@@ -105,6 +119,15 @@ def _parse_csv(value: str) -> tuple[str, ...]:
     return tuple(items)
 
 
+def _parse_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _parse_labels(value: str) -> tuple[str, ...]:
+    parts = [p.strip() for p in value.split(";") if p.strip()]
+    return tuple(parts)
+
+
 def _load_service_account_json(strict: bool) -> str:
     inline = os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON", "").strip()
     file_path = os.getenv("GDRIVE_SERVICE_ACCOUNT_FILE", "").strip()
@@ -149,7 +172,48 @@ def load_config(strict: bool = True) -> AppConfig:
         tie_break=_get_optional("TIE_BREAK", "created_at_desc"),
         image_output_size=int(_get_optional("IMAGE_OUTPUT_SIZE", "1500")),
         stroke_px=int(_get_optional("STROKE_PX", "15")),
+        edge_defringe_strength=float(_get_optional("EDGE_DEFRINGE_STRENGTH", "0.70")),
+        edge_defringe_alpha_max=int(_get_optional("EDGE_DEFRINGE_ALPHA_MAX", "245")),
         rembg_model_human=_get_optional("REMBG_MODEL_HUMAN", "u2net_human_seg"),
         rembg_model_object=_get_optional("REMBG_MODEL_OBJECT", "isnet-general-use"),
         rembg_model_fallback=_get_optional("REMBG_MODEL_FALLBACK", "u2net"),
+        rembg_alpha_matting=_parse_bool(_get_optional("REMBG_ALPHA_MATTING", "true")),
+        rembg_alpha_matting_foreground_threshold=int(
+            _get_optional("REMBG_ALPHA_MATTING_FOREGROUND_THRESHOLD", "240")
+        ),
+        rembg_alpha_matting_background_threshold=int(
+            _get_optional("REMBG_ALPHA_MATTING_BACKGROUND_THRESHOLD", "10")
+        ),
+        rembg_alpha_matting_erode_size=int(
+            _get_optional("REMBG_ALPHA_MATTING_ERODE_SIZE", "5")
+        ),
+        rembg_post_process_mask=_parse_bool(
+            _get_optional("REMBG_POST_PROCESS_MASK", "true")
+        ),
+        segmentation_backend=_get_optional("SEGMENTATION_BACKEND", "rembg").lower(),
+        prompted_detector_model=_get_optional(
+            "PROMPTED_DETECTOR_MODEL", "google/owlvit-base-patch32"
+        ),
+        prompted_sam_model=_get_optional("PROMPTED_SAM_MODEL", "facebook/sam-vit-base"),
+        prompted_detection_threshold=float(
+            _get_optional("PROMPTED_DETECTION_THRESHOLD", "0.12")
+        ),
+        prompted_head_labels=_parse_labels(
+            _get_optional(
+                "PROMPTED_HEAD_LABELS",
+                "person head only, no shoulders;human head;face",
+            )
+        ),
+        prompted_body_labels=_parse_labels(
+            _get_optional(
+                "PROMPTED_BODY_LABELS",
+                "person full body;person",
+            )
+        ),
+        prompted_car_labels=_parse_labels(
+            _get_optional(
+                "PROMPTED_CAR_LABELS",
+                "car;truck;vehicle;object",
+            )
+        ),
     )
