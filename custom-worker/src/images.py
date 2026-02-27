@@ -226,6 +226,37 @@ def refine_cutout_alpha(
     return Image.fromarray(arr, mode="RGBA")
 
 
+def apply_head_cut_line(
+    image: Image.Image,
+    cut_line_y: int,
+    feather_px: int = 28,
+) -> Image.Image:
+    rgba = image.convert("RGBA")
+    arr = np.asarray(rgba, dtype=np.uint8).copy()
+    alpha = arr[:, :, 3].astype(np.float32)
+    h = alpha.shape[0]
+    if h <= 0:
+        return rgba
+
+    cut_y = int(np.clip(cut_line_y, 0, h))
+    if cut_y <= 0:
+        arr[:, :, 3] = 0
+        return Image.fromarray(arr, mode="RGBA")
+
+    if feather_px > 0:
+        start = max(0, cut_y - int(feather_px))
+        end = cut_y
+        if end > start:
+            ys = np.arange(start, end, dtype=np.float32)
+            span = max(1.0, float(end - start))
+            fade = (float(end) - ys) / span
+            alpha[start:end, :] *= np.clip(fade[:, None], 0.0, 1.0)
+
+    alpha[cut_y:, :] = 0.0
+    arr[:, :, 3] = np.clip(alpha, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr, mode="RGBA")
+
+
 def _circular_kernel(radius: int) -> np.ndarray:
     if radius <= 0:
         return np.array([[True]], dtype=bool)
@@ -233,20 +264,23 @@ def _circular_kernel(radius: int) -> np.ndarray:
     return (x * x + y * y) <= (radius * radius)
 
 
+def build_white_stroke_backdrop(image: Image.Image, stroke_px: int) -> Image.Image:
+    rgba = image.convert("RGBA")
+    arr = np.asarray(rgba, dtype=np.uint8)
+    alpha = arr[:, :, 3]
+    core_mask = alpha > 20
+    dilated = binary_dilation(core_mask, structure=_circular_kernel(max(0, stroke_px)))
+
+    backdrop = np.zeros_like(arr, dtype=np.uint8)
+    backdrop[dilated] = np.array([255, 255, 255, 255], dtype=np.uint8)
+    return Image.fromarray(backdrop, mode="RGBA")
+
+
 def add_outer_white_stroke(image: Image.Image, stroke_px: int) -> Image.Image:
     if stroke_px <= 0:
         return image.copy()
 
-    rgba = image.convert("RGBA")
-    arr = np.asarray(rgba, dtype=np.uint8)
-    orig_mask = arr[:, :, 3] > 20
-
-    dilated = binary_dilation(orig_mask, structure=_circular_kernel(stroke_px))
-    stroke_mask = np.logical_and(dilated, np.logical_not(orig_mask))
-
-    stroke_layer = np.zeros_like(arr, dtype=np.uint8)
-    stroke_layer[stroke_mask] = np.array([255, 255, 255, 255], dtype=np.uint8)
-
-    base = Image.fromarray(stroke_layer, mode="RGBA")
-    base.alpha_composite(rgba)
-    return base
+    framed = image.convert("RGBA")
+    stroke_bg = build_white_stroke_backdrop(framed, stroke_px)
+    stroke_bg.alpha_composite(framed)
+    return stroke_bg

@@ -10,3 +10,4 @@ secrets/
 local-process-runs/
 
 local-drive-sim/
+src/custom_worker.egg-info/

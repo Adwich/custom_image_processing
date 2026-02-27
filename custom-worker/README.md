@@ -3,7 +3,7 @@
 Fly worker service for customization pipeline Points 4/5/6:
 - Drive ingest (UploadKit files)
 - strict `dx_order_id` resolution using `orders.order_status_en`
-- image processing (rembg + framing + outer stroke)
+- image processing (PhotoRoom bg removal + mode logic + framing + outer stroke)
 - structured operational logs in `custom_errors` and `custom_events`
 - JSON stdout/stderr logging for Fly machine logs
 - optional Sentry error/check-in integration
@@ -39,6 +39,30 @@ Optional:
 - `STROKE_PX=15`
 - `EDGE_DEFRINGE_STRENGTH=0.70` (reduces dark halo before white stroke)
 - `EDGE_DEFRINGE_ALPHA_MAX=245`
+- `HEAD_CUT_FEATHER_PX=28`
+- `HEAD_SHOULDER_OFFSET_RATIO=0.015`
+- `HEAD_FACE_FALLBACK_OFFSET_RATIO=0.22`
+- `HEAD_REQUIRE_FACE_DETECTION=true`
+- `HEAD_FACE_MIN_CONFIDENCE=0.40`
+- `HEAD_FACE_COVERAGE_MIN_RATIO=0.65`
+- `HEAD_TOP_CLIP_MARGIN_RATIO=0.01`
+- `HEAD_TORSO_LEAKAGE_MAX_RATIO=0.42`
+- `HEAD_REQUIRE_PART_PARSER=false` (`true` for strict production head-only mode)
+- `HEAD_PART_PARSER_PROVIDER=none` (`api` when using hosted human parsing)
+- `HEAD_PART_PARSER_API_URL=...`
+- `HEAD_PART_PARSER_API_KEY=...`
+- `HEAD_PART_PARSER_TIMEOUT_SECONDS=45`
+- `HEAD_PART_INCLUDE_LABELS=hair;face;head;neck`
+- `HEAD_PART_EXCLUDE_LABELS=upper_clothes;torso;upper_body;left_arm;right_arm;arms`
+- `HEAD_USE_AILABTOOLS=true` (for HEAD mode, try AILabTools first)
+- `AILABTOOLS_HEAD_API_KEY=...`
+- `AILABTOOLS_HEAD_API_URL=https://www.ailabapi.com/api/cutout/portrait/avatar-extraction`
+- `AILABTOOLS_TIMEOUT_SECONDS=60`
+- `AILABTOOLS_RETURN_FORM=` (optional; leave empty for standard URL response)
+- `SEGMENTATION_BACKEND=photoroom` (`rembg` and `prompted_sam` remain supported fallback backends)
+- `PHOTOROOM_API_KEY=...`
+- `PHOTOROOM_API_URL=https://sdk.photoroom.com/v1/segment`
+- `PHOTOROOM_TIMEOUT_SECONDS=60`
 - `REMBG_MODEL_HUMAN=u2net_human_seg`
 - `REMBG_MODEL_OBJECT=isnet-general-use`
 - `REMBG_MODEL_FALLBACK=u2net`
@@ -47,7 +71,6 @@ Optional:
 - `REMBG_ALPHA_MATTING_BACKGROUND_THRESHOLD=10`
 - `REMBG_ALPHA_MATTING_ERODE_SIZE=5`
 - `REMBG_POST_PROCESS_MASK=true`
-- `SEGMENTATION_BACKEND=rembg` (`prompted_sam` for text-prompt segmentation)
 - `PROMPTED_DETECTOR_MODEL=google/owlvit-base-patch32`
 - `PROMPTED_SAM_MODEL=facebook/sam-vit-base`
 - `PROMPTED_DETECTION_THRESHOLD=0.12`
@@ -78,6 +101,21 @@ python -m src.main
 
 Runtime logs are JSON lines with keys like `level`, `msg`, `ts`, and context
 fields, matching the style used by your existing Fly workers.
+
+Processing modes:
+- `head`: AILabTools head extraction is attempted first (head + bg removal in one pass). If it fails, fallback to configured segmentation backend (for example PhotoRoom). Then MediaPipe face safety gate + optional human parsing part-mask merge (`hair/face/head/neck` minus torso/arms), single-component cleanup, 1500x1500 framing, white outer stroke, strict head review gate.
+- `body`: PhotoRoom segmentation, single-component cleanup, 1500x1500 framing, white outer stroke, body gate.
+- `car`: PhotoRoom segmentation, single-component cleanup, 1500x1500 framing, white outer stroke, object gate.
+- `none`: no segmentation, frame only, no stroke.
+
+Processing artifacts:
+- `.../{asset_id}_segmented.png`: raw image returned by AILabTools/PhotoRoom before post-processing.
+- `.../{asset_id}_mask.png`: mask after pipeline refinements.
+- `.../{asset_id}_final.png`: framed output with white outer stroke.
+
+Stroke behavior:
+- The stroke is generated from a dilated outer mask and the masked subject is composited on top.
+- Subject alpha is preserved while edge RGB is white-matted to reduce dark halo artifacts.
 
 Run tests:
 
