@@ -269,8 +269,21 @@ def build_white_stroke_backdrop(image: Image.Image, stroke_px: int) -> Image.Ima
     arr = np.asarray(rgba, dtype=np.uint8)
     alpha = arr[:, :, 3]
     core_mask = alpha > 20
-    dilated = binary_dilation(core_mask, structure=_circular_kernel(max(0, stroke_px)))
 
+    # Smooth jagged subject edges before stroke dilation so the white contour
+    # is less noisy while still tracking the same silhouette.
+    smooth_radius = max(2, int(round(max(1, stroke_px) * 0.55)))
+    smooth_kernel = _circular_kernel(smooth_radius)
+    core_mask = ndimage.binary_closing(core_mask, structure=smooth_kernel)
+    core_mask = ndimage.binary_opening(core_mask, structure=smooth_kernel)
+    core_mask = ndimage.binary_fill_holes(core_mask)
+    # Additional contour smoothing pass before dilation.
+    pre_sigma = max(0.8, float(stroke_px) * 0.38)
+    core_mask = ndimage.gaussian_filter(core_mask.astype(np.float32), sigma=pre_sigma) >= 0.40
+
+    dilated = binary_dilation(core_mask, structure=_circular_kernel(max(0, stroke_px)))
+    edge_sigma = max(1.4, float(stroke_px) * 0.52)
+    dilated = ndimage.gaussian_filter(dilated.astype(np.float32), sigma=edge_sigma) >= 0.40
     backdrop = np.zeros_like(arr, dtype=np.uint8)
     backdrop[dilated] = np.array([255, 255, 255, 255], dtype=np.uint8)
     return Image.fromarray(backdrop, mode="RGBA")
@@ -282,5 +295,10 @@ def add_outer_white_stroke(image: Image.Image, stroke_px: int) -> Image.Image:
 
     framed = image.convert("RGBA")
     stroke_bg = build_white_stroke_backdrop(framed, stroke_px)
-    stroke_bg.alpha_composite(framed)
+    # Ensure subject never extends outside stroke backdrop shape.
+    bg_alpha = np.asarray(stroke_bg, dtype=np.uint8)[:, :, 3] > 0
+    framed_arr = np.asarray(framed, dtype=np.uint8).copy()
+    framed_arr[~bg_alpha, 3] = 0
+    framed_clipped = Image.fromarray(framed_arr, mode="RGBA")
+    stroke_bg.alpha_composite(framed_clipped)
     return stroke_bg

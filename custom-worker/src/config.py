@@ -67,6 +67,7 @@ class AppConfig:
     photoroom_api_url: str
     photoroom_timeout_seconds: int
     segmentation_backend: str
+    segmentation_skip_refinement: bool
     prompted_detector_model: str
     prompted_sam_model: str
     prompted_detection_threshold: float
@@ -274,6 +275,9 @@ def load_config(strict: bool = True) -> AppConfig:
         ),
         photoroom_timeout_seconds=int(_get_optional("PHOTOROOM_TIMEOUT_SECONDS", "60")),
         segmentation_backend=segmentation_backend,
+        segmentation_skip_refinement=_parse_bool(
+            _get_optional("SEGMENTATION_SKIP_REFINEMENT", "false")
+        ),
         prompted_detector_model=_get_optional(
             "PROMPTED_DETECTOR_MODEL", "google/owlvit-base-patch32"
         ),

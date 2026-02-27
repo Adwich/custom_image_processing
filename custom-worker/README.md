@@ -60,6 +60,7 @@ Optional:
 - `AILABTOOLS_TIMEOUT_SECONDS=60`
 - `AILABTOOLS_RETURN_FORM=` (optional; leave empty for standard URL response)
 - `SEGMENTATION_BACKEND=photoroom` (`rembg` and `prompted_sam` remain supported fallback backends)
+- `SEGMENTATION_SKIP_REFINEMENT=false` (when `true`, skip `refine_cutout_alpha` and go directly from raw segmented image to mask/framing/stroke)
 - `PHOTOROOM_API_KEY=...`
 - `PHOTOROOM_API_URL=https://sdk.photoroom.com/v1/segment`
 - `PHOTOROOM_TIMEOUT_SECONDS=60`
@@ -107,6 +108,8 @@ Processing modes:
 - `body`: PhotoRoom segmentation, single-component cleanup, 1500x1500 framing, white outer stroke, body gate.
 - `car`: PhotoRoom segmentation, single-component cleanup, 1500x1500 framing, white outer stroke, object gate.
 - `none`: no segmentation, frame only, no stroke.
+
+Set `SEGMENTATION_SKIP_REFINEMENT=true` if you want a raw path from `*_segmented.png` straight to mask/framing/stroke.
 
 Processing artifacts:
 - `.../{asset_id}_segmented.png`: raw image returned by AILabTools/PhotoRoom before post-processing.

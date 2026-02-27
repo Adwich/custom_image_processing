@@ -371,13 +371,14 @@ class AssetProcessor:
                 elif self.config.head_require_part_parser and face is not None:
                     head_reasons.append("head_part_mask_missing")
 
-                cutout = refine_cutout_alpha(
-                    cutout,
-                    keep_components=1,
-                    min_component_px=140,
-                    min_component_ratio=0.01,
-                    smooth_sigma=0.85,
-                )
+                if not self.config.segmentation_skip_refinement:
+                    cutout = refine_cutout_alpha(
+                        cutout,
+                        keep_components=1,
+                        min_component_px=140,
+                        min_component_ratio=0.01,
+                        smooth_sigma=0.85,
+                    )
 
                 alpha = alpha_from_rgba(cutout)
                 head_gate_reasons, head_gate_metrics = evaluate_head_specific_quality(
@@ -395,35 +396,38 @@ class AssetProcessor:
                 cutout = self._segment(original_image, cut_option)
                 raw_engine_cutout = cutout.copy()
                 segmentation_engine = self.config.segmentation_backend
-                cutout = refine_cutout_alpha(
-                    cutout,
-                    keep_components=1,
-                    min_component_px=140,
-                    min_component_ratio=0.01,
-                    smooth_sigma=0.85,
-                )
+                if not self.config.segmentation_skip_refinement:
+                    cutout = refine_cutout_alpha(
+                        cutout,
+                        keep_components=1,
+                        min_component_px=140,
+                        min_component_ratio=0.01,
+                        smooth_sigma=0.85,
+                    )
             elif cut_option == "car":
                 cutout = self._segment(original_image, cut_option)
                 raw_engine_cutout = cutout.copy()
                 segmentation_engine = self.config.segmentation_backend
-                cutout = refine_cutout_alpha(
-                    cutout,
-                    keep_components=1,
-                    min_component_px=140,
-                    min_component_ratio=0.01,
-                    smooth_sigma=0.75,
-                )
+                if not self.config.segmentation_skip_refinement:
+                    cutout = refine_cutout_alpha(
+                        cutout,
+                        keep_components=1,
+                        min_component_px=140,
+                        min_component_ratio=0.01,
+                        smooth_sigma=0.75,
+                    )
             else:
                 cutout = self._segment(original_image, cut_option)
                 raw_engine_cutout = cutout.copy()
                 segmentation_engine = self.config.segmentation_backend
-                cutout = refine_cutout_alpha(
-                    cutout,
-                    keep_components=1,
-                    min_component_px=100,
-                    min_component_ratio=0.01,
-                    smooth_sigma=0.85,
-                )
+                if not self.config.segmentation_skip_refinement:
+                    cutout = refine_cutout_alpha(
+                        cutout,
+                        keep_components=1,
+                        min_component_px=100,
+                        min_component_ratio=0.01,
+                        smooth_sigma=0.85,
+                    )
             alpha = alpha_from_rgba(cutout)
             quality = self._apply_mode_quality(alpha, cut_option, mode_metrics)
 
