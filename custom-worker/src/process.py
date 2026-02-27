@@ -33,6 +33,7 @@ from .storage import SupabaseStorageClient
 class ProcessingOutcome:
     status: str
     error: str | None
+    is_auto_processed: bool
     quality: QualityResult | None
     mask_storage_path: str | None
     segmentation_storage_path: str | None
@@ -232,38 +233,25 @@ class AssetProcessor:
                     mask_storage_path=outcome.mask_storage_path,
                     status=outcome.status,
                     error=outcome.error,
+                    is_auto_processed=outcome.is_auto_processed,
                 )
 
-                if outcome.status == "needs_review":
+                if outcome.error:
                     self.logger.log_error(
                         error_type="processing_needs_review",
-                        message=outcome.error or "quality gate failed",
+                        message=outcome.error,
                         severity="warning",
                         asset_id=asset_id,
                         client_order_id=str(asset["client_order_id"]),
                         context=outcome.quality.metrics if outcome.quality else {},
                     )
-                    self.logger.log_event(
-                        entity_type="asset",
-                        entity_id=asset_id,
-                        event_type="asset_needs_review",
+                self.logger.log_event(
+                    entity_type="asset",
+                    entity_id=asset_id,
+                    event_type="asset_needs_review",
                     event_data={
                         "status": outcome.status,
                         "error": outcome.error,
-                        "quality": outcome.quality.metrics if outcome.quality else {},
-                        "processed_storage_path": outcome.processed_storage_path,
-                        "mask_storage_path": outcome.mask_storage_path,
-                        "segmentation_storage_path": outcome.segmentation_storage_path,
-                        "segmentation_engine": outcome.segmentation_engine,
-                    },
-                )
-            else:
-                self.logger.log_event(
-                    entity_type="asset",
-                        entity_id=asset_id,
-                        event_type="asset_processed",
-                        event_data={
-                        "status": outcome.status,
                         "quality": outcome.quality.metrics if outcome.quality else {},
                         "processed_storage_path": outcome.processed_storage_path,
                         "mask_storage_path": outcome.mask_storage_path,
@@ -462,21 +450,16 @@ class AssetProcessor:
         final_path = f"{client_order_id}/processed/{asset_id}_final.png"
         self.storage.upload_bytes(final_path, image_to_png_bytes(final_img), "image/png")
 
-        if quality.passed:
-            return ProcessingOutcome(
-                status="processed",
-                error=None,
-                quality=quality,
-                mask_storage_path=mask_storage_path,
-                segmentation_storage_path=segmentation_storage_path,
-                segmentation_engine=segmentation_engine,
-                processed_storage_path=final_path,
-            )
+        error = None
+        is_auto_processed = bool(quality.passed)
+        if not is_auto_processed:
+            reason = ",".join(quality.reasons)
+            error = f"quality_gate_failed: {reason}"
 
-        reason = ",".join(quality.reasons)
         return ProcessingOutcome(
             status="needs_review",
-            error=f"quality_gate_failed: {reason}",
+            error=error,
+            is_auto_processed=is_auto_processed,
             quality=quality,
             mask_storage_path=mask_storage_path,
             segmentation_storage_path=segmentation_storage_path,

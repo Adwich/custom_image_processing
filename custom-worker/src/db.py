@@ -236,6 +236,7 @@ class Database:
         mask_storage_path: Optional[str],
         status: str,
         error: Optional[str],
+        is_auto_processed: bool,
     ) -> None:
         with self.connection() as conn:
             with conn.cursor() as cur:
@@ -247,10 +248,18 @@ class Database:
                         mask_storage_path = %s,
                         status = %s,
                         error = %s,
+                        is_auto_processed = %s,
                         updated_at = now()
                     where id = %s
                     """,
-                    (processed_storage_path, mask_storage_path, status, error, asset_id),
+                    (
+                        processed_storage_path,
+                        mask_storage_path,
+                        status,
+                        error,
+                        is_auto_processed,
+                        asset_id,
+                    ),
                 )
 
     def mark_asset_failed(self, asset_id: str, error: str) -> None:

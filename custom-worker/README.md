@@ -11,8 +11,7 @@ Fly worker service for customization pipeline Points 4/5/6:
 ## Status conventions
 
 This worker uses:
-- `processed` for successful quality gate
-- `needs_review` when quality gate fails (not `failed`)
+- `needs_review` for all successfully processed assets (dashboard/manual review later promotes to `processed`)
 - `failed` only for runtime exceptions
 - `needs_manual_link` for strict dx resolution ambiguity (`eligible_count != 1`)
 
@@ -156,7 +155,9 @@ If `eligible_count == 0` or `eligible_count > 1`, the worker sets `needs_manual_
 
 ## needs_review interpretation
 
-`needs_review` means image output exists, but one or more quality gate checks failed:
+`needs_review` means image output exists and is awaiting dashboard/manual review.
+If quality checks fail, `custom_assets.error` is set with `quality_gate_failed: ...` and a warning is logged.
+Quality checks include:
 - mask area ratio out of range
 - too many large connected components
 - bbox too thin/empty
