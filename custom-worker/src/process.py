@@ -451,7 +451,11 @@ class AssetProcessor:
         framed, _ = frame_cutout(cutout, cut_option, self.config.image_output_size)
 
         if cut_option != "none":
-            final_img = add_outer_white_stroke(framed, self.config.stroke_px)
+            final_img = add_outer_white_stroke(
+                framed,
+                self.config.stroke_px,
+                cut_option=cut_option,
+            )
         else:
             final_img = framed
 

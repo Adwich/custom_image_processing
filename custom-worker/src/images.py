@@ -289,12 +289,43 @@ def build_white_stroke_backdrop(image: Image.Image, stroke_px: int) -> Image.Ima
     return Image.fromarray(backdrop, mode="RGBA")
 
 
-def add_outer_white_stroke(image: Image.Image, stroke_px: int) -> Image.Image:
-    if stroke_px <= 0:
+def _resolve_dynamic_stroke_px(
+    image: Image.Image,
+    base_stroke_px: int,
+    cut_option: str | None,
+) -> int:
+    if base_stroke_px <= 0:
+        return 0
+
+    multiplier_by_cut = {
+        "head": 1.10,
+        "body": 1.00,
+        "car": 0.95,
+    }
+    multiplier = multiplier_by_cut.get((cut_option or "").lower(), 1.00)
+
+    alpha = alpha_from_rgba(image.convert("RGBA"))
+    bbox = _bbox_from_alpha(alpha, threshold=20)
+    if bbox is None:
+        return int(base_stroke_px)
+
+    subject_w = max(1, int(bbox[2] - bbox[0]))
+    scale = (float(subject_w) / 468.0) ** 0.35
+    dynamic = int(round(float(base_stroke_px) * scale * multiplier))
+    return int(np.clip(dynamic, 12, 24))
+
+
+def add_outer_white_stroke(
+    image: Image.Image,
+    stroke_px: int,
+    cut_option: str | None = None,
+) -> Image.Image:
+    resolved_stroke_px = _resolve_dynamic_stroke_px(image, stroke_px, cut_option)
+    if resolved_stroke_px <= 0:
         return image.copy()
 
     framed = image.convert("RGBA")
-    stroke_bg = build_white_stroke_backdrop(framed, stroke_px)
+    stroke_bg = build_white_stroke_backdrop(framed, resolved_stroke_px)
     # Ensure subject never extends outside stroke backdrop shape.
     bg_alpha = np.asarray(stroke_bg, dtype=np.uint8)[:, :, 3] > 0
     framed_arr = np.asarray(framed, dtype=np.uint8).copy()
