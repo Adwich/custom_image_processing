@@ -4,8 +4,10 @@ import signal
 import threading
 
 from .config import ConfigError, load_config
+from .control_api import WorkerControlApi
 from .db import Database
 from .drive import GoogleDriveClient
+from .export import ExportProcessor
 from .ingest import ingest_from_drive
 from .logging_events import EventLogger
 from .observability import capture_exception, init_sentry, log_json, maybe_send_heartbeat
@@ -35,6 +37,8 @@ def run_worker() -> None:
         config.supabase_storage_bucket,
     )
     processor = AssetProcessor(config, db, storage, logger)
+    exporter = ExportProcessor(config, db, storage, logger)
+    control_api = WorkerControlApi(config, db)
 
     stop_event = threading.Event()
 
@@ -53,77 +57,104 @@ def run_worker() -> None:
         max_ingest_per_run=config.max_ingest_per_run,
         max_process_per_run=config.max_process_per_run,
         max_resolve_per_run=config.max_resolve_per_run,
+        max_export_per_run=config.max_export_per_run,
     )
-
-    cycle = 0
-    while not stop_event.is_set():
-        cycle += 1
-        ingest_count = 0
-        resolved = 0
-        processed = 0
-
-        try:
-            ingest_count = ingest_from_drive(
-                config=config,
-                db=db,
-                drive=drive,
-                storage=storage,
-                logger=logger,
-                resolve_asset_fn=lambda asset_id: resolve_asset_dx_order(
-                    db, logger, config, asset_id
-                ),
-            )
-        except Exception as exc:
-            capture_exception(
-                exc,
-                service=service,
-                cycle=cycle,
-                stage="ingest_from_drive",
-            )
-
-        try:
-            resolved = resolve_pending_links(
-                db=db,
-                logger=logger,
-                config=config,
-                limit=config.max_resolve_per_run,
-            )
-        except Exception as exc:
-            capture_exception(
-                exc,
-                service=service,
-                cycle=cycle,
-                stage="resolve_pending_links",
-            )
-
-        try:
-            processed = processor.process_images()
-        except Exception as exc:
-            capture_exception(
-                exc,
-                service=service,
-                cycle=cycle,
-                stage="process_images",
-            )
-
+    control_api.start()
+    if config.control_api_enabled:
         log_json(
             "info",
-            "worker_cycle_completed",
+            "worker_control_api_started",
             service=service,
-            cycle=cycle,
-            ingested=ingest_count,
-            resolved=resolved,
-            processed=processed,
-            sleep_seconds=config.poll_interval_seconds,
+            host=config.control_api_host,
+            port=config.control_api_port,
         )
 
-        maybe_send_heartbeat(
-            service=service,
-            jobs_claimed=(ingest_count + processed),
-            poll_seconds=config.poll_interval_seconds,
-        )
+    try:
+        cycle = 0
+        while not stop_event.is_set():
+            cycle += 1
+            ingest_count = 0
+            resolved = 0
+            processed = 0
+            exported = 0
 
-        stop_event.wait(config.poll_interval_seconds)
+            try:
+                ingest_count = ingest_from_drive(
+                    config=config,
+                    db=db,
+                    drive=drive,
+                    storage=storage,
+                    logger=logger,
+                    resolve_asset_fn=lambda asset_id: resolve_asset_dx_order(
+                        db, logger, config, asset_id
+                    ),
+                )
+            except Exception as exc:
+                capture_exception(
+                    exc,
+                    service=service,
+                    cycle=cycle,
+                    stage="ingest_from_drive",
+                )
+
+            try:
+                resolved = resolve_pending_links(
+                    db=db,
+                    logger=logger,
+                    config=config,
+                    limit=config.max_resolve_per_run,
+                )
+            except Exception as exc:
+                capture_exception(
+                    exc,
+                    service=service,
+                    cycle=cycle,
+                    stage="resolve_pending_links",
+                )
+
+            try:
+                processed = processor.process_images()
+            except Exception as exc:
+                capture_exception(
+                    exc,
+                    service=service,
+                    cycle=cycle,
+                    stage="process_images",
+                )
+
+            try:
+                exported = exporter.process_exports()
+            except Exception as exc:
+                capture_exception(
+                    exc,
+                    service=service,
+                    cycle=cycle,
+                    stage="process_exports",
+                )
+
+            log_json(
+                "info",
+                "worker_cycle_completed",
+                service=service,
+                cycle=cycle,
+                ingested=ingest_count,
+                resolved=resolved,
+                processed=processed,
+                exported=exported,
+                sleep_seconds=config.poll_interval_seconds,
+            )
+
+            maybe_send_heartbeat(
+                service=service,
+                jobs_claimed=(ingest_count + processed + exported),
+                poll_seconds=config.poll_interval_seconds,
+            )
+
+            stop_event.wait(config.poll_interval_seconds)
+    finally:
+        control_api.stop()
+        if config.control_api_enabled:
+            log_json("info", "worker_control_api_stopped", service=service)
 
     log_json("info", "worker_stopped", service=service)
 

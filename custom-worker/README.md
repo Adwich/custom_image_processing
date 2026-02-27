@@ -31,6 +31,12 @@ Optional:
 - `MAX_INGEST_PER_RUN=50`
 - `MAX_PROCESS_PER_RUN=25`
 - `MAX_RESOLVE_PER_RUN=50`
+- `MAX_EXPORT_PER_RUN=1`
+- `EXPORT_SIGNED_URL_TTL_SECONDS=86400`
+- `CONTROL_API_ENABLED=false`
+- `CONTROL_API_HOST=0.0.0.0`
+- `CONTROL_API_PORT=8787`
+- `CONTROL_API_TOKEN=...` (required when `CONTROL_API_ENABLED=true`)
 - `ELIGIBLE_ORDER_STATUS_EN=pending,wb_submit,wb_assign,wb_success,wb_failed,to_ship_in,to_ship_oos`
 - `ORDER_STATUS_FIELD=order_status_en`
 - `TIE_BREAK=created_at_desc`
@@ -146,6 +152,24 @@ python -m src.main
 ```
 
 No public ports are exposed.
+
+## Manual export jobs
+
+The worker exposes a control API for manual export jobs (when `CONTROL_API_ENABLED=true`):
+- `POST /exports` with body `{ "asset_ids": ["uuid"], "requested_by": "admin" }`
+- `GET /exports/{id}`
+- `GET /exports?limit=30`
+
+The worker itself processes jobs from `public.custom_exports`:
+- Claims `pending` jobs and marks them `running`
+- Collects assets eligible for export (`status='processed'` and `processed_storage_path is not null`)
+- Builds a ZIP and uploads to `customization/exports/{job_id}/...`
+- Writes a signed URL and marks job `completed`
+- Marks job `failed` on errors
+
+Job payload contract (`request_payload` json):
+- `asset_ids: string[]` (optional): if provided, export only these asset IDs (still requires status `processed`)
+- if omitted, exports all currently eligible processed assets
 
 ## Eligible status maintenance
 

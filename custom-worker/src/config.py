@@ -25,6 +25,12 @@ class AppConfig:
     max_ingest_per_run: int
     max_process_per_run: int
     max_resolve_per_run: int
+    max_export_per_run: int
+    export_signed_url_ttl_seconds: int
+    control_api_enabled: bool
+    control_api_host: str
+    control_api_port: int
+    control_api_token: str
 
     eligible_order_status_en: tuple[str, ...]
     order_status_field: str
@@ -180,6 +186,14 @@ def load_config(strict: bool = True) -> AppConfig:
         raise ConfigError(
             "Missing required environment variable: PHOTOROOM_API_KEY (SEGMENTATION_BACKEND=photoroom)"
         )
+    control_api_enabled = _parse_bool(
+        _get_optional("CONTROL_API_ENABLED", "false")
+    )
+    control_api_token = _get_optional("CONTROL_API_TOKEN", "")
+    if strict and control_api_enabled and not control_api_token:
+        raise ConfigError(
+            "Missing required environment variable: CONTROL_API_TOKEN (CONTROL_API_ENABLED=true)"
+        )
 
     eligible_csv = _get_optional("ELIGIBLE_ORDER_STATUS_EN", DEFAULT_ELIGIBLE_STATUSES)
     eligible = _parse_csv(eligible_csv)
@@ -198,6 +212,14 @@ def load_config(strict: bool = True) -> AppConfig:
         max_ingest_per_run=int(_get_optional("MAX_INGEST_PER_RUN", "50")),
         max_process_per_run=int(_get_optional("MAX_PROCESS_PER_RUN", "25")),
         max_resolve_per_run=int(_get_optional("MAX_RESOLVE_PER_RUN", "50")),
+        max_export_per_run=int(_get_optional("MAX_EXPORT_PER_RUN", "1")),
+        export_signed_url_ttl_seconds=int(
+            _get_optional("EXPORT_SIGNED_URL_TTL_SECONDS", "86400")
+        ),
+        control_api_enabled=control_api_enabled,
+        control_api_host=_get_optional("CONTROL_API_HOST", "0.0.0.0"),
+        control_api_port=int(_get_optional("CONTROL_API_PORT", "8787")),
+        control_api_token=control_api_token,
         eligible_order_status_en=eligible,
         order_status_field=_get_optional("ORDER_STATUS_FIELD", "order_status_en"),
         tie_break=_get_optional("TIE_BREAK", "created_at_desc"),

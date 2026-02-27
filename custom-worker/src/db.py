@@ -36,6 +36,30 @@ class Database:
                     );
                     """
                 )
+                cur.execute(
+                    """
+                    create table if not exists public.custom_exports (
+                        id text primary key,
+                        status text not null,
+                        requested_by text,
+                        request_payload jsonb not null default '{}'::jsonb,
+                        zip_storage_path text,
+                        zip_signed_url text,
+                        asset_count int not null default 0,
+                        error text,
+                        created_at timestamptz not null default now(),
+                        started_at timestamptz,
+                        completed_at timestamptz,
+                        updated_at timestamptz not null default now()
+                    );
+                    """
+                )
+                cur.execute(
+                    """
+                    create index if not exists idx_custom_exports_status_created_at
+                    on public.custom_exports (status, created_at);
+                    """
+                )
 
     def get_kv(self, key: str) -> Optional[str]:
         with self.connection() as conn:
@@ -285,6 +309,210 @@ class Database:
                 if not row:
                     return None
                 return str(row["order_status_en"])
+
+    def create_export_job(
+        self,
+        job_id: str,
+        request_payload: dict[str, Any],
+        requested_by: Optional[str] = None,
+    ) -> dict[str, Any]:
+        payload = json.dumps(request_payload or {})
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into public.custom_exports (
+                        id,
+                        status,
+                        requested_by,
+                        request_payload
+                    )
+                    values (%s, 'pending', %s, %s::jsonb)
+                    returning
+                        id,
+                        status,
+                        requested_by,
+                        request_payload,
+                        zip_storage_path,
+                        zip_signed_url,
+                        asset_count,
+                        error,
+                        created_at,
+                        started_at,
+                        completed_at,
+                        updated_at
+                    """,
+                    (job_id, requested_by, payload),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise RuntimeError("Failed to create export job")
+                return row
+
+    def fetch_export_job(self, job_id: str) -> Optional[dict[str, Any]]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        status,
+                        requested_by,
+                        request_payload,
+                        zip_storage_path,
+                        zip_signed_url,
+                        asset_count,
+                        error,
+                        created_at,
+                        started_at,
+                        completed_at,
+                        updated_at
+                    from public.custom_exports
+                    where id = %s
+                    """,
+                    (job_id,),
+                )
+                return cur.fetchone()
+
+    def list_export_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select
+                        id,
+                        status,
+                        requested_by,
+                        request_payload,
+                        zip_storage_path,
+                        zip_signed_url,
+                        asset_count,
+                        error,
+                        created_at,
+                        started_at,
+                        completed_at,
+                        updated_at
+                    from public.custom_exports
+                    order by created_at desc
+                    limit %s
+                    """,
+                    (limit,),
+                )
+                return cur.fetchall()
+
+    def claim_export_jobs(self, limit: int) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select id
+                    from public.custom_exports
+                    where status = 'pending'
+                    order by created_at asc
+                    for update skip locked
+                    limit %s
+                    """,
+                    (limit,),
+                )
+                ids = [str(row["id"]) for row in cur.fetchall()]
+                if not ids:
+                    return []
+                cur.execute(
+                    """
+                    update public.custom_exports
+                    set
+                        status = 'running',
+                        started_at = now(),
+                        error = null,
+                        updated_at = now()
+                    where id = any(%s::text[])
+                    returning id, requested_by, request_payload, created_at
+                    """,
+                    (ids,),
+                )
+                return cur.fetchall()
+
+    def fetch_assets_for_export(self, asset_ids: Optional[list[str]] = None) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                if asset_ids:
+                    cur.execute(
+                        """
+                        select
+                            id,
+                            client_order_id,
+                            dx_order_id,
+                            cut_option,
+                            scent,
+                            quantity,
+                            processed_storage_path
+                        from public.custom_assets
+                        where id = any(%s::uuid[])
+                          and status = 'processed'
+                          and processed_storage_path is not null
+                        order by created_at asc
+                        """,
+                        (asset_ids,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        select
+                            id,
+                            client_order_id,
+                            dx_order_id,
+                            cut_option,
+                            scent,
+                            quantity,
+                            processed_storage_path
+                        from public.custom_assets
+                        where status = 'processed'
+                          and processed_storage_path is not null
+                        order by created_at asc
+                        """
+                    )
+                return cur.fetchall()
+
+    def mark_export_job_completed(
+        self,
+        job_id: str,
+        zip_storage_path: str,
+        zip_signed_url: str,
+        asset_count: int,
+    ) -> None:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update public.custom_exports
+                    set
+                        status = 'completed',
+                        zip_storage_path = %s,
+                        zip_signed_url = %s,
+                        asset_count = %s,
+                        error = null,
+                        completed_at = now(),
+                        updated_at = now()
+                    where id = %s
+                    """,
+                    (zip_storage_path, zip_signed_url, asset_count, job_id),
+                )
+
+    def mark_export_job_failed(self, job_id: str, error: str) -> None:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update public.custom_exports
+                    set
+                        status = 'failed',
+                        error = %s,
+                        completed_at = now(),
+                        updated_at = now()
+                    where id = %s
+                    """,
+                    (error, job_id),
+                )
 
     def insert_event(
         self,
