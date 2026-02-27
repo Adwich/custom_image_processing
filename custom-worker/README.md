@@ -166,6 +166,11 @@ The worker itself processes jobs from `public.custom_exports`:
 - Builds a ZIP and uploads to `customization/exports/{job_id}/...`
 - Writes a signed URL and marks job `completed`
 - Marks job `failed` on errors
+- ZIP tree format:
+  - `{dx_order_id}/{scent}_{quantity}x/image.png`
+  - `{dx_order_id}/{scent}_{quantity}x/barcode.png`
+  - If multiple items share same `{dx_order_id}+{scent}+{quantity}`, folders are suffixed (`..._a`, `..._b`, ...)
+  - Barcode encodes only `dx_order_id`; barcode image text includes `dx_order_id` and `scent`
 
 Job payload contract (`request_payload` json):
 - `asset_ids: string[]` (optional): if provided, export only these asset IDs (still requires status `processed`)

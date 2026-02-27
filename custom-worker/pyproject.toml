@@ -21,7 +21,8 @@ dependencies = [
   "mediapipe>=0.10.21",
   "rembg>=2.0.59",
   "onnxruntime>=1.19.0",
-  "sentry-sdk>=2.18.0"
+  "sentry-sdk>=2.18.0",
+  "python-barcode>=0.15.1"
 ]
 
 [project.optional-dependencies]

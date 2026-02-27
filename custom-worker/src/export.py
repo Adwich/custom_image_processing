@@ -6,6 +6,8 @@ import zipfile
 from datetime import datetime, timezone
 from typing import Any
 
+from PIL import Image, ImageDraw, ImageFont
+
 from .config import AppConfig
 from .db import Database
 from .logging_events import EventLogger
@@ -21,6 +23,85 @@ _UUID_RE = re.compile(
 def _safe_part(value: str) -> str:
     cleaned = _SAFE_PATH_RE.sub("_", value.strip())
     return cleaned or "unknown"
+
+
+def _alpha_suffix(position: int) -> str:
+    # 1 -> a, 2 -> b, ... 26 -> z, 27 -> aa
+    if position <= 0:
+        return "a"
+    chars: list[str] = []
+    value = position
+    while value > 0:
+        value, rem = divmod(value - 1, 26)
+        chars.append(chr(ord("a") + rem))
+    return "".join(reversed(chars))
+
+
+def _as_positive_quantity(value: Any) -> int:
+    try:
+        qty = int(value)
+    except Exception:
+        return 1
+    return qty if qty > 0 else 1
+
+
+def _as_scent(value: Any) -> str:
+    scent = str(value).strip() if value is not None else ""
+    return scent or "no_scent"
+
+
+def _barcode_png_with_labels(dx_order_id: str, scent: str) -> bytes:
+    try:
+        from barcode import Code128
+        from barcode.writer import ImageWriter
+    except Exception as exc:
+        raise RuntimeError(
+            "python-barcode is required for export barcode generation"
+        ) from exc
+
+    writer_options = {
+        "module_width": 0.33,
+        "module_height": 22.0,
+        "quiet_zone": 2.0,
+        "font_size": 0,
+        "text_distance": 0,
+        "write_text": False,
+    }
+    base = Code128(dx_order_id, writer=ImageWriter()).render(writer_options).convert("RGBA")
+    width, height = base.size
+
+    font = ImageFont.load_default()
+    pad_x = 16
+    pad_y = 10
+    line_gap = 4
+    label_1 = f"DX: {dx_order_id}"
+    label_2 = f"Scent: {scent}"
+    d = ImageDraw.Draw(base)
+    box_1 = d.textbbox((0, 0), label_1, font=font)
+    box_2 = d.textbbox((0, 0), label_2, font=font)
+    text_h = (box_1[3] - box_1[1]) + line_gap + (box_2[3] - box_2[1])
+    text_w = max(box_1[2] - box_1[0], box_2[2] - box_2[0])
+
+    out_w = max(width + (pad_x * 2), text_w + (pad_x * 2))
+    out_h = height + (pad_y * 2) + text_h
+    out = Image.new("RGBA", (out_w, out_h), (255, 255, 255, 255))
+
+    barcode_x = (out_w - width) // 2
+    out.paste(base, (barcode_x, pad_y), base)
+
+    draw = ImageDraw.Draw(out)
+    text_y = pad_y + height + 2
+    draw.text((pad_x, text_y), label_1, fill=(0, 0, 0, 255), font=font)
+    draw.text(
+        (pad_x, text_y + (box_1[3] - box_1[1]) + line_gap),
+        label_2,
+        fill=(0, 0, 0, 255),
+        font=font,
+    )
+
+    payload = io.BytesIO()
+    out.save(payload, format="PNG")
+    return payload.getvalue()
 
 
 class ExportProcessor:
@@ -101,20 +182,36 @@ class ExportProcessor:
         zip_storage_path = f"exports/{job_id}/custom_export_{now}.zip"
 
         archive = io.BytesIO()
+        folder_counts: dict[tuple[str, str], int] = {}
         with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
             for asset in assets:
-                asset_id = str(asset["id"])
-                client_order_id = str(asset.get("client_order_id") or "unknown")
+                dx_order_id = str(asset.get("dx_order_id") or "").strip()
+                if not dx_order_id:
+                    raise RuntimeError("Asset missing dx_order_id; cannot build export tree")
+
                 source_path = str(asset["processed_storage_path"])
                 file_bytes = self.storage.download_bytes(source_path)
                 ext = ".png"
                 if "." in source_path.rsplit("/", 1)[-1]:
                     ext = "." + source_path.rsplit(".", 1)[-1]
-                zip_name = (
-                    f"{_safe_part(client_order_id)}/"
-                    f"{_safe_part(asset_id)}_final{_safe_part(ext).replace('_', '.')}"
-                )
-                zf.writestr(zip_name, file_bytes)
+                ext = _safe_part(ext).replace("_", ".")
+
+                scent = _as_scent(asset.get("scent"))
+                qty = _as_positive_quantity(asset.get("quantity"))
+                order_folder = _safe_part(dx_order_id)
+                item_base = _safe_part(f"{scent}_{qty}x")
+
+                key = (order_folder, item_base)
+                idx = folder_counts.get(key, 0) + 1
+                folder_counts[key] = idx
+                item_folder = item_base if idx == 1 else f"{item_base}_{_alpha_suffix(idx - 1)}"
+
+                image_zip_path = f"{order_folder}/{item_folder}/image{ext}"
+                barcode_zip_path = f"{order_folder}/{item_folder}/barcode.png"
+                barcode_bytes = _barcode_png_with_labels(dx_order_id=dx_order_id, scent=scent)
+
+                zf.writestr(image_zip_path, file_bytes)
+                zf.writestr(barcode_zip_path, barcode_bytes)
 
         zip_bytes = archive.getvalue()
         self.storage.upload_bytes(
