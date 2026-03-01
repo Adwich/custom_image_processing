@@ -145,9 +145,12 @@ class Database:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    select o.dx_order_id, o.order_status_en, o.created_at
+                    select
+                        o.order_dx_id as dx_order_id,
+                        o.order_status_en,
+                        o.order_created_at as created_at
                     from public.orders o
-                    where o.client_order_id = %s
+                    where o.order_client_id = %s
                     """,
                     (client_order_id,),
                 )
@@ -302,7 +305,7 @@ class Database:
         with self.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "select order_status_en from public.orders where dx_order_id = %s",
+                    "select order_status_en from public.orders where order_dx_id = %s",
                     (dx_order_id,),
                 )
                 row = cur.fetchone()
